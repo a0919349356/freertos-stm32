@@ -21,7 +21,7 @@ int16_t player2Y = LCD_PIXEL_HEIGHT -20;
 int16_t pre_player2X;
 int16_t pre_player2Y;
 uint16_t player2W = 30;
-uint16_t player2H = 10;
+uint16_t player2H = 20;
 uint8_t player2IsReversed = 0;
 
 //Ball
@@ -35,6 +35,7 @@ uint8_t lev = 0;
 
 //Mode
 uint8_t demoMode = 0;
+uint8_t laymode = 0;
 
 //game over
 uint8_t finish = 0;
@@ -127,7 +128,6 @@ GAME_Update()
 		LCD_SetTextColor( LCD_COLOR_WHITE );
 		LCD_DrawFullRect( player2X,player2Y, player2W, player2H );
 
-		LCD_SetLayer( LCD_BACKGROUND_LAYER );
 		LCD_SetTransparency(0xFF);
 		LCD_SetLayer( LCD_FOREGROUND_LAYER );	
 		LCD_SetTransparency(0x00);
@@ -326,7 +326,6 @@ GAME_Render()
 	for(i = 0;i < lev;i++)
 		LCD_DrawFullRect( ballX[i], ballY[i], ballSize, ballSize );
 
-	LCD_SetLayer( LCD_FOREGROUND_LAYER );
 	LCD_SetTransparency(0xFF);
 	LCD_SetLayer( LCD_BACKGROUND_LAYER );
 	LCD_SetTransparency(0x00);
