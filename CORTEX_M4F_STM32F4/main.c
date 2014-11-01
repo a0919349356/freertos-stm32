@@ -26,30 +26,78 @@
   */
 
 /* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "game.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "main.h"
-#include "draw_graph.h"
-#include "move_car.h"
-
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
+/** @addtogroup Template
+  * @{
+  */ 
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
 /* Private macro -------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
-xQueueHandle t_queue; /* Traffic light queue. */
-xQueueHandle t_mutex; /* Traffic light mutex. */
+extern uint8_t demoMode;
 
-static int traffic_index = 0; 
-static int button_change_traffic = 0;
-static int states[] = {TRAFFIC_RED, TRAFFIC_YELLOW, TRAFFIC_GREEN, 
-							TRAFFIC_YELLOW};
+void RCC_Configuration(void)
+{
+/* --------------------------- System Clocks Configuration -----------------*/
+/* USART1 clock enable */
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+/* GPIOA clock enable */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+}
+/**************************************************************************************/
+void GPIO_Configuration(void)
+{
+	GPIO_InitTypeDef GPIO_InitStructure;
+/*-------------------------- GPIO Configuration ----------------------------*/
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9 | GPIO_Pin_10;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA, &GPIO_InitStructure);
+/* Connect USART pins to AF */
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource9, GPIO_AF_USART1); // USART1_TX
+	GPIO_PinAFConfig(GPIOA, GPIO_PinSource10, GPIO_AF_USART1); // USART1_RX
+}
+/**************************************************************************************/
+void USART1_Configuration(void)
+{
+	USART_InitTypeDef USART_InitStructure;
+/* USARTx configuration ------------------------------------------------------*/
+/* USARTx configured as follow:
+* - BaudRate = 9600 baud
+* - Word Length = 8 Bits
+* - One Stop Bit
+* - No parity
+* - Hardware flow control disabled (RTS and CTS signals)
+* - Receive and transmit enabled
+*/
+	USART_InitStructure.USART_BaudRate = 115200;
+	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+	USART_InitStructure.USART_StopBits = USART_StopBits_1;
+	USART_InitStructure.USART_Parity = USART_Parity_No;
+	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+	USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+	USART_Init(USART1, &USART_InitStructure);
+	USART_Cmd(USART1, ENABLE);
+}
+void USART1_puts(char* s)
+{
+	while(*s) {
+		while(USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
+		USART_SendData(USART1, *s);
+		s++;
+	}
+}
 
 void
 prvInit()
@@ -60,150 +108,84 @@ prvInit()
 	LTDC_Cmd( ENABLE );
 
 	LCD_LayerInit();
+	LCD_SetLayer( LCD_BACKGROUND_LAYER );
+	LCD_Clear( LCD_COLOR_BLACK );
 	LCD_SetLayer( LCD_FOREGROUND_LAYER );
 	LCD_Clear( LCD_COLOR_BLACK );
 	LCD_SetTextColor( LCD_COLOR_WHITE );
 
 	//Button
 	STM_EVAL_PBInit( BUTTON_USER, BUTTON_MODE_GPIO );
+
+	//LED
+	STM_EVAL_LEDInit( LED3 );
 }
 
-static void GetTrafficState(int change_state, int *v_state, int *h_state)
+static void GameEventTask1( void *pvParameters )
 {
-
-	switch (change_state) {
-	case TRAFFIC_RED:
-		*v_state = TRAFFIC_RED;
-		*h_state = TRAFFIC_GREEN;
-		break;
-	case TRAFFIC_YELLOW:
-		if (*v_state == TRAFFIC_GREEN)
-			*v_state = TRAFFIC_YELLOW;
-		else
-			*h_state = TRAFFIC_YELLOW;
-		break;
-	case TRAFFIC_GREEN:
-		*v_state = TRAFFIC_GREEN;
-		*h_state = TRAFFIC_RED;
-		break;
-	default:
-		ReportError("out of range");
-		break;
+	while( 1 ){
+		GAME_EventHandler1();
 	}
 }
 
-static void DrawGraphTask( void *pvParameters)
+static void GameEventTask2( void *pvParameters )
 {
-	const portTickType ticks = 100 / portTICK_RATE_MS;
-	int value;
-	int traffic_v_state = TRAFFIC_GREEN;
-	int traffic_h_state = TRAFFIC_RED;
+	while( 1 ){
+		GAME_EventHandler2();
+	}
+}
 
-	portBASE_TYPE status;
+static void GameEventTask3( void *pvParameters )
+{
+	while( 1 ){
+		GAME_EventHandler3();
+	}
+}
 
-	DrawBackground();
+static void GameTask( void *pvParameters )
+{
+	while( 1 ){
+		GAME_Update();
+		GAME_Render();
+		vTaskDelay( 10 );
+	}
+}
 
-	while ( 1 ) {
-		/*
-		 * Check if the traffic changed event is sent to
-		 * the queue. If so, we need to change the traffic
-		 * light.
-		 */
-		status = xQueueReceive(t_queue, &value, ticks);
-
-		if (status == pdPASS) {
-			GetTrafficState(value, &traffic_v_state, 
-						&traffic_h_state);
+static void Uart( void * pp )
+{
+//	USART1_puts("Hello World!\r\n");
+//	USART1_puts("Just for STM32F429I Discovery verify USART1 with USB TTL Cable\r\n");
+	while(1)
+	{
+		while(USART_GetFlagStatus(USART1, USART_FLAG_RXNE) == RESET);
+		char t = USART_ReceiveData(USART1);
+		if ((t == '\r')) {
+			while(USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
+			USART_SendData(USART1, t);
+			t = '\n';
 		}
-
-		MoveCar(traffic_v_state, traffic_h_state);
+		while(USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
+		USART_SendData(USART1, t);
 	}
+	while(1); // Don't want to exit	
 }
-
-static void ChgTrafficLightTask(void *pvParameters)
-{
-	int num_ticks;
-	int states_num = sizeof(states) / sizeof(states[0]);
-
-	portBASE_TYPE status;
-	portTickType ticks = TRAFFIC_GREEN_TICK;
-
-	while ( 1 ) {
-		ticks = (states[traffic_index] == TRAFFIC_YELLOW ? 
-			TRAFFIC_YELLOW_TICK : TRAFFIC_GREEN_TICK);
-
-		num_ticks = ticks / TRAFFIC_TICK_SLICE;
-
-		status = xQueueSendToBack(t_queue, &states[traffic_index++], 0);
-	
-		if (status != pdPASS)
-			ReportError("Cannot send to the queue!");
-
-		if (traffic_index >= states_num)
-			traffic_index = 0;
-
-		while (num_ticks--) { 
-			xSemaphoreTake(t_mutex, portMAX_DELAY);
-			
-			if (button_change_traffic) {
-				button_change_traffic = 0;
-				xSemaphoreGive(t_mutex);
-				break;
-			}
-
-			xSemaphoreGive(t_mutex);
-
-			vTaskDelay(TRAFFIC_TICK_SLICE);
-		}
-	}
-}
-
-static void ButtonEventTask(void *pvParameters)
-{
-	while (1) {
-		if( STM_EVAL_PBGetState( BUTTON_USER ) ){
-
-			while( STM_EVAL_PBGetState( BUTTON_USER ) );
-
-			xSemaphoreTake(t_mutex, portMAX_DELAY);
-			button_change_traffic = 1;
-			xSemaphoreGive(t_mutex);
-		}
-	}
-}
-
 //Main Function
 int main(void)
 {
-
-	t_queue = xQueueCreate(1, sizeof(int));
-	if (!t_queue) {
-		ReportError("Failed to create t_queue");
-		while(1);
-	}
-
-	t_mutex = xSemaphoreCreateMutex();
-	if (!t_mutex) {
-		ReportError("Failed to create t_mutex");
-		while(1);
-	}
-
 	prvInit();
+	RCC_Configuration();
+	GPIO_Configuration();
+	USART1_Configuration();
 
-	xTaskCreate(ChgTrafficLightTask, "Traffic Light Task", 256, 
-			( void * ) NULL, tskIDLE_PRIORITY + 1, NULL);
-
-	xTaskCreate(ButtonEventTask, (char *) "Button Event Task", 256,
-		   	NULL, tskIDLE_PRIORITY + 1, NULL);
-
-	xTaskCreate(DrawGraphTask, (char *) "Draw Graph Task", 256,
-		   	NULL, tskIDLE_PRIORITY + 2, NULL);
-
-
-	RCC_AHB2PeriphClockCmd(RCC_AHB2Periph_RNG, ENABLE);
-        RNG_Cmd(ENABLE);
+	if( STM_EVAL_PBGetState( BUTTON_USER ) )
+		demoMode = 1;
+	srand(5566);
+	xTaskCreate( Uart, (signed char*) "Uart", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
+	xTaskCreate( GameTask, (signed char*) "GameTask", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
+	xTaskCreate( GameEventTask1, (signed char*) "GameEventTask1", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
+	xTaskCreate( GameEventTask2, (signed char*) "GameEventTask2", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
+	xTaskCreate( GameEventTask3, (signed char*) "GameEventTask3", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
 
 	//Call Scheduler
 	vTaskStartScheduler();
 }
-
